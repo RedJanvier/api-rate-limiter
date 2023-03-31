@@ -1,0 +1,25 @@
+server:
+  port : 8081
+
+cloud:
+  gateway:
+    routes:
+      - id: route1
+        uri: http://localhost:8081/api/v1
+        predicates:
+          - path=/api/v1
+        filters:
+          - name: NoficaLimiter
+            args:
+              redis-rate-limiter.replenishRate: 20
+              redis-rate-limiter.burstCapacity: 40
+              redis-rate-limiter.requestedTokens: 1
+
+resilience4j:
+  ratelimiter:
+    instances:
+      NoficaLimiter:
+        registerHealthIndicator: false
+        limitForPeriod: 10
+        limitRefreshPeriod: 100ms
+        timeoutDuration: 3s

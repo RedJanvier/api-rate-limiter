@@ -1,0 +1,7 @@
+FROM java:11-jre
+MAINTAINER Janvier NTWALI HABIYAREMYE <janvierntwali@gmail.com>
+
+ADD ./target/Notification-Service.jar /app/
+CMD ["java", "-Xmx200m", "-jar", "/app/Notification-Service.jar"]
+
+EXPOSE 8080

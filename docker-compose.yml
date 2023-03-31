@@ -1,0 +1,61 @@
+version: "3"
+services:
+  api:
+    build: 
+      context: ./Limiter-Service
+    depends_on:
+      - db
+      - redis
+      - kafka
+    ports:
+      - "8081:8081"
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    restart: always
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - 22181:2181
+  notification:
+    build: 
+      context: ./Notification-Service
+      dockerfile: Dockerfile
+    depends_on:
+      - db
+      - kafka
+    ports:
+      - "8080:8080"
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    restart: always
+    depends_on:
+      - zookeeper
+    ports:
+      - 29092:29092
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+  redis:
+    image: redis:alpine
+    restart: always
+    ports:
+      - '6379:6379'
+  db:
+    image:  postgres:13.1-alpine
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_HOST: db
