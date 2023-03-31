@@ -15,8 +15,6 @@
 
     - [Summary](#summary)
 
-    - [ERD - Entity Relation Design](#erd---entity-relation-design)
-
     - [HLD - High-Level Design](#hld---high-level-design)
     
     - [Technologies used](#tech-stack)
