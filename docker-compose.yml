@@ -1,61 +1,94 @@
-version: "3"
 services:
-  api:
-    build: 
-      context: ./Limiter-Service
-    depends_on:
-      - db
-      - redis
-      - kafka
-    ports:
-      - "8081:8081"
-  zookeeper:
-    image: confluentinc/cp-zookeeper:latest
-    restart: always
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - 22181:2181
-  notification:
-    build: 
-      context: ./Notification-Service
-      dockerfile: Dockerfile
-    depends_on:
-      - db
-      - kafka
-    ports:
-      - "8080:8080"
-  kafka:
-    image: confluentinc/cp-kafka:latest
-    restart: always
-    depends_on:
-      - zookeeper
-    ports:
-      - 29092:29092
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://kafka:29092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-  redis:
-    image: redis:alpine
-    restart: always
-    ports:
-      - '6379:6379'
   db:
-    image:  postgres:13.1-alpine
+    image: postgres:15-alpine
     restart: always
     env_file:
       - .env
-    ports:
-      - "5434:5432"
     environment:
-      POSTGRES_HOST_AUTH_METHOD: trust
-      POSTGRES_PORT: ${POSTGRES_PORT}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: always
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI -> http://localhost:8025
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+    depends_on:
+      redis:
+        condition: service_healthy
+      sms-service:
+        condition: service_started
+      email-service:
+        condition: service_started
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SMS_SERVICE_URI: http://sms-service:8082
+      EMAIL_SERVICE_URI: http://email-service:8083
+    ports:
+      - "8081:8081"
+
+  sms-service:
+    build:
+      context: ./sms-service
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-      DB_HOST: db
+      SMS_PROVIDER: ${SMS_PROVIDER}
+    ports:
+      - "8082:8082"
+
+  email-service:
+    build:
+      context: ./email-service
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+      EMAIL_FROM: ${EMAIL_FROM}
+    ports:
+      - "8083:8083"
+
+volumes:
+  pgdata:
