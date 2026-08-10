@@ -64,16 +64,16 @@ It is difficult to provide a precise estimate of the CPU, memory, and network ba
 
 **1. Traffic patterns:**
 Assuming that there are 1 million customers and each customer performs 10 notifications per day, the total number of notifications per day is 10 million.
-If we assume that the traffic is evenly distributed throughout the day, the average number of notifications per second is approximately 115.
+If we assume that the traffic is evenly distributed throughout the day, the average number of notifications per second is approximately 11.5 notifications.
 
 **2. Response time requirements:**
-Let's assume that the target response time for each notification is 500 milliseconds.
-This means that the system must be able to handle at least 2 notifications per second per CPU core.
+Let's assume that the target response time for each notification is 50 milliseconds. Normal Redis operations take less than 1 millisecond (typically 0.2 to 0.5 milliseconds, or 200 to 500 microseconds) per operation.
+This means that the system must be able to handle at least 25 notifications per second per CPU core.
 
 **3. Resource utilization:**
 Based on these estimates, we can calculate the required CPU, memory, and network bandwidth for the system as follows:
 
-    - CPU: 2 cores per notification * 115 notifications per second = 230 cores
+    - CPU: 25 notifications / 11.5 notifications per second = 2 cores scalable
     - Memory: The required memory will depend on the specific requirements of the system and the resources required by the chosen technology stack.
     - Network bandwidth: The required network bandwidth will depend on the size of the notifications and the expected traffic patterns.
 
@@ -91,10 +91,13 @@ Continuing on the requirements listed above, We are going to propose the best wa
 
 Let's build a microservices distributed system which will handle both non-functional and functional requirements.
 
-This is with two services:
+This is with three services (see the architecture diagram above — **Client → API Gateway → { SMS Service, Email Service }**):
 
-- **API Gateway (Limiter service):** This will be handling the authentication, rate limiting, circuit breaking, retries, etc… of the clients and will be the path to all other services.
-- **Notification Service:** This is a service which will handle different methods of operations and each of their specific errors to send a notification by SMS or by Email.
+- **API Gateway (Limiter service):** The single entry point for clients. It performs **distributed, Redis-backed rate limiting** and routes each request to the correct downstream service. Sending is capped system-wide (≈10 requests / 3 seconds); a per-client resolver keyed on the `X-Client-Id` header is also provided.
+- **SMS Service:** Sends notifications by SMS and persists every attempt. Ships with a **mock provider** (logs the message, no account needed) that is swappable for **Twilio** via configuration.
+- **Email Service:** Sends notifications by Email and persists every attempt. Delivers to a local **Mailpit** inbox out of the box; swappable for any real SMTP server via configuration.
+
+Communication between the gateway and the services is **synchronous HTTP**. The README's message-broker (Kafka) design remains a valid future evolution for fully asynchronous, fire-and-forget delivery, but is not required for the current flow.
 
 There are several strategies you can use to make the rate limiter platform scalable for 1 million customers such as: Use a distributed database, Use a load balancer, Use a cache, Use asynchronous communication and Use horizontal scaling
 
@@ -124,17 +127,20 @@ There are several strategies you can use to make the rate limiter platform scala
   - Use horizontal scaling to add more instances of the API gateway and back-end services as needed to handle the load.
   - Use a container orchestration platform, such as Kubernetes, to automate the deployment and management of the containers
 
-<img width="766" alt="Screenshot 2023-03-31 at 07 25 45" src="https://user-images.githubusercontent.com/39817762/229034091-3a08b872-14b0-412f-833b-1caf88ec152d.png">
+<img width="1588" height="669" alt="Image" src="https://github.com/user-attachments/assets/7067e3f5-ed1b-4d26-869b-ed1368e3733e" />
 
 The solution provided doesn't tackle all the points but it is a base for the remaining elements not present on the diagram.
 
 #### Tech Stack
 
-- **PostgreSQL** : Prirmary data store and indexing data store
-- **RedisDB** : Cached data store
-- **Kafka** : Message queue/Brokker
-- **Spring Boot** : For both Microservices
-- **Docker** : Containerization
+- **Spring Cloud Gateway** : Reactive API gateway (routing + rate limiting)
+- **PostgreSQL** : Primary data store for notification history
+- **Redis** : Backing store for the distributed rate limiter
+- **Mailpit** : Local SMTP server + web inbox for verifying emails
+- **Twilio** *(optional)* : Real SMS delivery provider
+- **Spring Boot** : All three microservices (Java 17)
+- **Docker / Docker Compose** : Containerization & local orchestration
+- **Kafka** *(future)* : Message broker for asynchronous delivery
 
 ## Security
 
@@ -174,7 +180,7 @@ Here are a few strategies we can use to make the Rate Limiter platform more secu
 ### 1. Clone this repository using git and open the project directory in terminal
 
 ```
-git clone https://github.com/RedJanvier/api-rate-limiter.git && cd the Rate Limiter
+git clone https://github.com/RedJanvier/api-rate-limiter.git && cd api-rate-limiter
 ```
 
 ### 2. Run the project
@@ -182,29 +188,99 @@ git clone https://github.com/RedJanvier/api-rate-limiter.git && cd the Rate Limi
 **Note:** Before starting up the application make sure the following ports are not in use to avoid any conflict.
 
 > Ports list:
-> - Redis (6379)
-> - Kafka (29092)
-> - Postgres (5432)
 > - API Gateway (8081)
-> - Notification Service (8080)
+> - SMS Service (8082)
+> - Email Service (8083)
+> - Postgres (5432)
+> - Redis (6379)
+> - Mailpit SMTP (1025) & Web UI (8025)
 
-Run the command `docker compose up` to spin up the Rate Limiter api-gateway and notification-microservice.
+Run the command below to build and spin up all three microservices plus Postgres, Redis, and Mailpit:
+
+```bash
+docker compose up --build
+```
+
+The default configuration needs **no external credentials**: SMS uses a mock provider (messages appear in the `sms-service` logs) and Email is delivered to Mailpit, viewable at **http://localhost:8025**.
 
 ## Documentation
-> Base path for all endpoints is `http://localhost:8080/api/v1`
+> Base path for all endpoints (through the gateway) is `http://localhost:8081/api/v1`
 
-| Method | Endpoint              | Enable a user to:                     |Docs|
-| ------ | --------------------- | ------------------------------------- |------|
-| GET    | /                     | Send Notification by SMS              |[Send Notification](#send-notification)|
+| Method | Endpoint                       | Enable a user to:                          | Docs |
+| ------ | ------------------------------ | ------------------------------------------ | ---- |
+| POST   | /notifications/sms             | Send a notification by SMS                 | [Send SMS](#send-sms) |
+| GET    | /notifications/sms             | List all SMS notifications (history)       | [Send SMS](#send-sms) |
+| GET    | /notifications/sms/{id}        | Read a single SMS notification             | [Send SMS](#send-sms) |
+| POST   | /notifications/email           | Send a notification by Email               | [Send Email](#send-email) |
+| GET    | /notifications/email           | List all Email notifications (history)     | [Send Email](#send-email) |
+| GET    | /notifications/email/{id}      | Read a single Email notification           | [Send Email](#send-email) |
 
-### Send Notification
+All requests flow through the gateway, which applies the rate limit before proxying to the SMS or Email service. Exceeding the limit returns **HTTP 429 Too Many Requests**.
 
-`GET /`: Sends notification by SMS.
+### Send SMS
+
+`POST /api/v1/notifications/sms`
 
 **Request body:**
-  NOT APPLICABLE
-  
-**Response body:** message that notification was sent.
+```json
+{
+  "to": "+250788000000",
+  "message": "Hello from the rate limiter"
+}
+```
+
+**Response body** (`201 Created`): the persisted notification record.
+```json
+{
+  "id": 1,
+  "recipient": "+250788000000",
+  "message": "Hello from the rate limiter",
+  "status": "SENT",
+  "provider": "mock",
+  "error": null,
+  "createdAt": "2026-08-09T10:15:30Z"
+}
+```
+
+Example:
+```bash
+curl -X POST http://localhost:8081/api/v1/notifications/sms \
+  -H 'Content-Type: application/json' \
+  -d '{"to":"+250788000000","message":"Hello"}'
+```
+
+### Send Email
+
+`POST /api/v1/notifications/email`
+
+**Request body:**
+```json
+{
+  "to": "user@example.com",
+  "subject": "Welcome",
+  "body": "Hello from the rate limiter"
+}
+```
+
+**Response body** (`201 Created`): the persisted notification record (with `status`, `error`, `createdAt`). Open **http://localhost:8025** to see the delivered email in Mailpit.
+
+Example:
+```bash
+curl -X POST http://localhost:8081/api/v1/notifications/email \
+  -H 'Content-Type: application/json' \
+  -d '{"to":"user@example.com","subject":"Welcome","body":"Hello"}'
+```
+
+### Switching SMS to Twilio (optional)
+
+Set the following in `.env` (or as environment variables) and restart:
+
+```bash
+SMS_PROVIDER=twilio
+TWILIO_ACCOUNT_SID=your_account_sid
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_FROM_NUMBER=+1XXXXXXXXXX
+```
 
 ## Author
 
