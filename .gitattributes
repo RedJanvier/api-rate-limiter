@@ -1,0 +1,10 @@
+# Normalize line endings so the Maven wrapper runs on Linux CI runners.
+* text=auto
+
+# Shell scripts must be LF regardless of the OS they were committed from.
+mvnw text eol=lf
+*.sh text eol=lf
+
+# Windows scripts stay CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
