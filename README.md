@@ -140,6 +140,7 @@ The solution provided doesn't tackle all the points but it is a base for the rem
 - **Twilio** *(optional)* : Real SMS delivery provider
 - **Spring Boot** : All three microservices (Java 17)
 - **Docker / Docker Compose** : Containerization & local orchestration
+- **GitHub Actions** : CI — builds and tests every service on each push
 - **Kafka** *(future)* : Message broker for asynchronous delivery
 
 ## Security
@@ -202,6 +203,20 @@ docker compose up --build
 ```
 
 The default configuration needs **no external credentials**: SMS uses a mock provider (messages appear in the `sms-service` logs) and Email is delivered to Mailpit, viewable at **http://localhost:8025**.
+
+### 3. Run the tests
+
+Each service is an independent Maven module with its own test suite. Run one with its wrapper:
+
+```bash
+cd sms-service && ./mvnw test
+```
+
+No Docker is required to run the tests: persistence tests use an in-memory H2 database, and the API-gateway rate-limit test starts an in-process Redis (embedded-redis). All suites also run automatically in CI on every push (see [Continuous Integration](#continuous-integration)).
+
+## Continuous Integration
+
+Every push and pull request triggers the GitHub Actions workflow at [`.github/workflows/ci.yml`](.github/workflows/ci.yml). It runs a matrix job — one per service (`api-gateway`, `sms-service`, `email-service`) — that sets up JDK 17, restores the Maven cache, and runs `./mvnw verify`. The build fails if any test fails, so regressions are caught before merge.
 
 ## Documentation
 > Base path for all endpoints (through the gateway) is `http://localhost:8081/api/v1`
